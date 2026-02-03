@@ -123,8 +123,8 @@ def send_email(recipient_email, output_file):
     """Send email with result file"""
     try:
         # Email configuration - UPDATE THESE WITH YOUR CREDENTIALS
-        sender_email = "simarprabh095@gmail.com"  # Change this
-        sender_password = "wods spdg mvfq dsnx"   # Change this (use app password for Gmail)
+        sender_email = os.getenv('SENDER_EMAIL', 'simarprabh095@gmail.com')  # Change this
+        sender_password = os.getenv('SENDER_PASSWORD', 'wods spdg mvfq dsnx')   # Change this (use app password for Gmail)
         
         # Create message
         msg = MIMEMultipart()
