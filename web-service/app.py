@@ -9,6 +9,7 @@ from email.mime.text import MIMEText
 from email.mime.base import MIMEBase
 from email import encoders
 import re
+import gc
 
 app = Flask(__name__)
 app.secret_key = 'your-secret-key-change-this-in-production'
@@ -58,47 +59,38 @@ def validate_inputs(weights_str, impacts_str, num_criteria):
         return False, "Weights must be numeric values"
 
 def perform_topsis(input_file, weights_str, impacts_str, output_file):
-    """Perform TOPSIS calculation"""
+    """Perform TOPSIS calculation - MEMORY OPTIMIZED"""
     try:
         import numpy as np
         
         # Read input file
-        data = pd.read_csv(input_file)
+        data = pd.read_csv(input_file, engine='python')
         
         if data.shape[1] < 3:
             return False, "Input file must contain at least 3 columns"
         
-        # Extract criteria (all columns except first)
+        # Extract criteria (all columns except first) - convert to numpy for efficiency
         try:
-            criteria = data.iloc[:, 1:].astype(float)
+            criteria_values = data.iloc[:, 1:].values.astype(np.float32)
         except:
             return False, "Criteria columns must be numeric"
         
         # Parse weights and impacts
-        weights = np.array([float(w.strip()) for w in weights_str.split(',')])
+        weights = np.array([float(w.strip()) for w in weights_str.split(',')], dtype=np.float32)
         impacts = [i.strip() for i in impacts_str.split(',')]
         
         # Normalize the decision matrix
-        norm = np.sqrt((criteria ** 2).sum())
-        normalized = criteria / norm
+        norm = np.sqrt((criteria_values ** 2).sum(axis=0))
+        normalized = criteria_values / norm
         
         # Apply weights
         weighted = normalized * weights
         
         # Determine ideal best and ideal worst
-        ideal_best = []
-        ideal_worst = []
-        
-        for i in range(weighted.shape[1]):
-            if impacts[i] == "+":
-                ideal_best.append(weighted.iloc[:, i].max())
-                ideal_worst.append(weighted.iloc[:, i].min())
-            else:
-                ideal_best.append(weighted.iloc[:, i].min())
-                ideal_worst.append(weighted.iloc[:, i].max())
-        
-        ideal_best = np.array(ideal_best)
-        ideal_worst = np.array(ideal_worst)
+        ideal_best = np.array([weighted[:, i].max() if impacts[i] == "+" else weighted[:, i].min() 
+                              for i in range(weighted.shape[1])], dtype=np.float32)
+        ideal_worst = np.array([weighted[:, i].min() if impacts[i] == "+" else weighted[:, i].max() 
+                               for i in range(weighted.shape[1])], dtype=np.float32)
         
         # Calculate distances
         dist_best = np.sqrt(((weighted - ideal_best) ** 2).sum(axis=1))
@@ -106,14 +98,21 @@ def perform_topsis(input_file, weights_str, impacts_str, output_file):
         
         # Calculate TOPSIS score
         score = dist_worst / (dist_best + dist_worst)
-        rank = score.rank(ascending=False, method="dense")
+        
+        # Create rank - convert to pandas Series only for ranking
+        score_series = pd.Series(score)
+        rank = score_series.rank(ascending=False, method="dense").astype(int)
         
         # Add score and rank to dataframe
         data["Topsis Score"] = score
-        data["Rank"] = rank.astype(int)
+        data["Rank"] = rank
         
         # Save output file
         data.to_csv(output_file, index=False)
+        
+        # Force garbage collection to free memory
+        del criteria_values, normalized, weighted, dist_best, dist_worst, score, score_series, rank
+        gc.collect()
         
         return True, "TOPSIS calculation successful"
     except Exception as e:
@@ -122,9 +121,9 @@ def perform_topsis(input_file, weights_str, impacts_str, output_file):
 def send_email(recipient_email, output_file):
     """Send email with result file"""
     try:
-        # Email configuration - UPDATE THESE WITH YOUR CREDENTIALS
-        sender_email = os.getenv('SENDER_EMAIL', 'simarprabh095@gmail.com')  # Change this
-        sender_password = os.getenv('SENDER_PASSWORD', 'wods spdg mvfq dsnx')   # Change this (use app password for Gmail)
+        # Email configuration - uses environment variables for security
+        sender_email = os.getenv('SENDER_EMAIL', 'simarprabh095@gmail.com')
+        sender_password = os.getenv('SENDER_PASSWORD', 'wods spdg mvfq dsnx')
         
         # Create message
         msg = MIMEMultipart()
@@ -148,17 +147,14 @@ def send_email(recipient_email, output_file):
         
         msg.attach(MIMEText(body, 'plain'))
         
-        # Attach file
+        # Attach file - use context manager to ensure file is closed
         filename = os.path.basename(output_file)
-        attachment = open(output_file, "rb")
-        
-        part = MIMEBase('application', 'octet-stream')
-        part.set_payload(attachment.read())
-        encoders.encode_base64(part)
-        part.add_header('Content-Disposition', f"attachment; filename= {filename}")
-        
-        msg.attach(part)
-        attachment.close()
+        with open(output_file, "rb") as attachment:
+            part = MIMEBase('application', 'octet-stream')
+            part.set_payload(attachment.read())
+            encoders.encode_base64(part)
+            part.add_header('Content-Disposition', f"attachment; filename= {filename}")
+            msg.attach(part)
         
         # Send email
         server = smtplib.SMTP('smtp.gmail.com', 587)
@@ -175,6 +171,8 @@ def send_email(recipient_email, output_file):
 @app.route('/', methods=['GET', 'POST'])
 def index():
     if request.method == 'POST':
+        input_path = None
+        output_path = None
         try:
             # Get form data
             file = request.files.get('file')
@@ -216,18 +214,22 @@ def index():
             
             # Read file to get number of criteria
             try:
-                df = pd.read_csv(input_path)
+                df = pd.read_csv(input_path, engine='python')
                 num_criteria = df.shape[1] - 1  # Exclude first column
+                del df  # Free memory immediately
+                gc.collect()
             except Exception as e:
                 flash(f'Error reading CSV file: {str(e)}', 'error')
-                os.remove(input_path)
+                if input_path and os.path.exists(input_path):
+                    os.remove(input_path)
                 return redirect(request.url)
             
             # Validate inputs
             valid, message = validate_inputs(weights, impacts, num_criteria)
             if not valid:
                 flash(message, 'error')
-                os.remove(input_path)
+                if input_path and os.path.exists(input_path):
+                    os.remove(input_path)
                 return redirect(request.url)
             
             # Perform TOPSIS
@@ -238,15 +240,12 @@ def index():
             
             if not success:
                 flash(message, 'error')
-                os.remove(input_path)
+                if input_path and os.path.exists(input_path):
+                    os.remove(input_path)
                 return redirect(request.url)
             
             # Send email
             email_success, email_message = send_email(email, output_path)
-            
-            # Clean up files
-            os.remove(input_path)
-            os.remove(output_path)
             
             if email_success:
                 flash('TOPSIS analysis completed! Results sent to your email.', 'success')
@@ -258,6 +257,17 @@ def index():
         except Exception as e:
             flash(f'An error occurred: {str(e)}', 'error')
             return redirect(request.url)
+        finally:
+            # Clean up files in finally block to ensure cleanup happens
+            try:
+                if input_path and os.path.exists(input_path):
+                    os.remove(input_path)
+                if output_path and os.path.exists(output_path):
+                    os.remove(output_path)
+            except:
+                pass
+            # Force garbage collection after request
+            gc.collect()
     
     return render_template('index.html')
 
