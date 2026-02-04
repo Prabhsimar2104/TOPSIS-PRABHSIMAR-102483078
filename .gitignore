@@ -3,8 +3,8 @@
 # ==========================================
 
 # Streamlit Secrets (MOST IMPORTANT!)
-.streamlit/secrets.toml
-.streamlit/config.toml
+# Ignore the ENTIRE .streamlit folder
+.streamlit/
 
 # Python
 __pycache__/
