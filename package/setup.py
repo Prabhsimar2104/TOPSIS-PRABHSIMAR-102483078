@@ -15,7 +15,7 @@ setup(
     long_description_content_type="text/markdown",
     license="MIT",  # 🔧 explicitly added
     packages=find_packages(),
-    install_requires=[
+    install_requires=[ 
         "numpy",
         "pandas"
     ],
