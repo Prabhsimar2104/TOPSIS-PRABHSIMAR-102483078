@@ -7,18 +7,19 @@ long_description = (this_directory / "README.md").read_text(encoding="utf-8")
 
 setup(
     name="Topsis-Prabhsimar-102483078",
-    version="1.0.4",
+    version="1.0.5",  # 🔧 bumped version
     author="Prabhsimar Singh",
-    author_email="prabhsimar@example.com",
+    author_email="pbatra_be23@thapar.edu",  # 🔧 real email
     description="A Python package for TOPSIS multi-criteria decision making",
     long_description=long_description,
     long_description_content_type="text/markdown",
+    license="MIT",  # 🔧 explicitly added
     packages=find_packages(),
     install_requires=[
         "numpy",
         "pandas"
     ],
-    python_requires=">=3.6",
+    python_requires=">=3.6",  # ✅ keep as-is
     classifiers=[
         "Development Status :: 5 - Production/Stable",
         "Intended Audience :: Education",
